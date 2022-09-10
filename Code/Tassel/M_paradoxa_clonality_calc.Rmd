@@ -1,0 +1,152 @@
+#M paradoxa Clonal lineadge Work
+
+```{r}
+#!/usr/bin/env Rscript
+
+# This script takes a 012 formatted file (as output by VCFTools) and creates a pairwise IBS similarity matrix 
+# for use in identifying and filtering out clones
+
+################################## LOAD 012 FILES ###############################
+setwd("C:/Users/super/Desktop/PhD_2015_2021/GBS_paper/gbs_pop_work/m_paradoxa_paper_snp/8_7_22")
+
+getwd()
+
+snps_p <- read.table("./m_paradoxa_vcftools_full_filt_8_8_22_c.012.pos")
+head(snps_p)
+
+taxa_list <- read.csv("C:/Users/super/Desktop/PhD_2015_2021/GBS_paper/gbs_pop_work/m_paradoxa_paper_snp/8_7_22/taxa_list.txt", sep="")
+indv_p <- taxa_list$Taxa
+
+
+
+geno_p <- read.table("m_paradoxa_vcftools_full_filt_8_8_22_c.012")
+print("geno_a loaded")
+geno_p <- geno_p[,-1]
+geno_p <- t(geno_p)
+
+geno_p[geno_p==-1] <- NA
+print('finished replacing NAs')
+
+################################ IBS FUNCTION ###################################
+
+ibs <- function(x,y){
+
+  alleles_ibs <- 2 - abs(x-y)
+  return(sum(alleles_ibs, na.rm = T)/(2*sum(!is.na(alleles_ibs))))
+  
+}
+
+#################### CALCULATE IBS FOR EACH PAIRWISE ISOLATE COMBINATION ###########
+
+d <- ncol(geno_p)
+
+IBS_matrix_p <- matrix(nrow=d, ncol=d)
+
+print("got to loop")
+
+for(i in 1:(d-1)){
+	for (j in (i +1):d){
+		IBS_matrix_p[i,j] <- ibs(geno_p[,i], geno_p[,j])
+	}
+	print(i)
+}
+
+rownames(IBS_matrix_p) <- indv_p
+colnames(IBS_matrix_p) <- indv_p
+
+write.csv(IBS_matrix_p, "./IBS_matrix_p.csv")
+
+> taxa.list <- read.csv("C:/Users/super/Desktop/PhD_2015_2021/GBS_paper/gbs_pop_work/m_paradoxa_paper_snp/8_7_22/taxa list.txt", sep="")
+
+indv_p <- substring(indv_p, 1:58, 1:57)
+indv_p$V1
+indv_p <- taxa.list$Taxa
+geno_p
+
+```
+
+
+
+```{r}
+
+# Clone correction of M americana isolates from around NY and US
+# This will return file with clonal group designations of all isolates
+
+# Then it will return a list of the samples corresponding the cc dataset
+
+library(igraph)
+
+################################# READ IBS MATRIX, genotYPE FILES, and missING DATA FILE ##############################
+setwd("~/gbs_pop_work/m_paradoxa_paper_snp/2_3_21/m_paradoxa_clone_work")
+getwd()
+#Load IBS matrix and make individuals row and column names
+
+IBS_matrix_p <- read.csv("./IBS_matrix_p.csv", header = T)
+row.names(IBS_matrix_p) <- IBS_matrix_p$X
+IBS_matrix_p$X <- NULL
+IBS_matrix_p <- as.matrix(IBS_matrix_p)
+
+
+#Load missaing data info
+miss_p <- read.table("./m_paradoxa.imiss", header=T)
+
+
+############################### ASSIGN INDIVIDUALS TO CLONAL GROUPS ################################
+
+#Turn high IBS cells of matrix to 1
+modify_matrix <- function(x){
+  if(is.na(x) | x<.88){
+    return(0)
+  }else{
+    
+    return(1)
+  }
+}
+clone_or_not_p <- structure(sapply(IBS_matrix_p, modify_matrix), dim=dim(IBS_matrix_p))
+
+# Create network -> Each isolate is a node and there is an edge between isolates that are clones
+g <- graph_from_adjacency_matrix(clone_or_not_p, "undirected")
+
+# Clusters are isolates that only have edges between themselves and not the rest of the network (ie clones)
+g.clusters <- clusters(graph = g)
+g.clusters
+#### Create table of clonal group assignments
+
+# Make list of cluster size corresponding to each member of network (used later)
+cluster_sizes <- rep(NA, length(indv_p))
+for(i in 1:length(cluster_sizes)){
+  member <- g.clusters$membership[i]
+  size <- sum(g.clusters$membership == member)
+  cluster_sizes[i] <- size
+}
+
+
+# Prepare table and variables for loop
+clonal_groups <- 1:(g.clusters$no)
+clone_assignments_p <- matrix(ncol=2)
+colnames(clone_assignments_p) <- c("Sample", "Clonal_group")
+counter <- 0
+
+# Assign individuals to clonal groups starting with largest group
+for(i in 1:length(unique(g.clusters$csize))){ #loop through all unique cluster sizes
+  # Start with largest cluster size
+  current_size <- sort(unique(g.clusters$csize), decreasing=T)[i] 
+  # how many groups of this size are there
+  same_size_clonal_groups <- unique(g.clusters$membership[cluster_sizes == current_size]) 
+  #loop through groups of that size
+  for(j in 1:length(same_size_clonal_groups)){ 
+    counter <- counter +1
+    old_clonal_group_id <- same_size_clonal_groups[j] #Assignment to group from g.clusters$membership
+    new_clonal_group_assignment <- clonal_groups[counter] #New assignment going from largest to smallest
+    clone_assignments_p <- rbind(clone_assignments_p, cbind(
+      indv_p[which(g.clusters$membership == old_clonal_group_id)],
+      new_clonal_group_assignment))
+  }
+}
+clone_assignments_p <- clone_assignments_p[-1,]
+clone_assignments_p <- as.data.frame(clone_assignments_p, stringsAsFactors = F)
+clone_assignments_p$Clonal_group <- as.integer(clone_assignments_p$Clonal_group)
+
+write.table(clone_assignments_p, "./clone_assignments_p.txt", row.names = F, quote=F, sep="\t")
+
+```
